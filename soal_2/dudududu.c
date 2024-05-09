@@ -243,6 +243,9 @@ int main(int argc, char *argv[])
         }
         else if(coba < 10){
         switch (angka2) {
+        case 0:
+            strcpy(tulisan2, "nol");
+            break;
         case 1:
             strcpy(tulisan2, "satu");
             break;
