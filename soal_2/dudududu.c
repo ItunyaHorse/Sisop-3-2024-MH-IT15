@@ -23,10 +23,10 @@ int main(int argc, char *argv[])
     pipe(parentsfd);
     pipe(childfd);
 
-	scanf("%s", pengali1); 
+    scanf("%s", pengali1); 
     scanf("%s", pengali2); 
     
-	p = fork(); 
+    p = fork(); 
     
     if (p > 0) 
 	{   
