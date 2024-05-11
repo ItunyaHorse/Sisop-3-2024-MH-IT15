@@ -9,6 +9,278 @@ Anggota:
 ## Soal no 1
 Dikerjakan oleh **Nicholas Emanuel Fade (5027231070)**
 
+Pada nomor 1 ini, kita pada dasarnya diminta untuk membuat 3 program, auth.c itu untuk mengecheck bawha csv file di direktori newdata memiliki keyword trashcan atau parkinglot dan menaruhnya di shared memory, db.c itu untuk mengambil file csv dari shared memory ke direktori microservices/database dan membuat file db.log di direktori yang sama, rate.c itu untuk mengambil csv file di shared memory dan mengoutput nama dan rating paling tinggi di filenya.
+
+Pertama kita liat dulu auth.c
+
+Bagian ini untuk menauthenticate file csvnya:
+
+```bash
+void authenticate_files() {
+    DIR *dir;
+    struct dirent *entry;
+    dir = opendir("new-data");
+    if (!dir) {
+        perror("Unable to open directory");
+        exit(EXIT_FAILURE);
+    }
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_REG) {
+            char *filename = entry->d_name;
+            if (strstr(filename, "trashcan") == NULL && strstr(filename, "parkinglot") == NULL) {
+                // File name doesn't contain "trashcan" or "parkinglot", delete the file
+                char filepath[MAX_FILENAME_LENGTH];
+                snprintf(filepath, MAX_FILENAME_LENGTH, "new-data/%s", filename);
+                remove(filepath);
+                printf("Deleted file: %s\n", filename);
+            }
+        }
+    }
+    closedir(dir);
+}
+```
+
+Bagian ini untuk mengambil file ke shared memory
+
+```bash
+void authenticate_and_move_to_shared_memory() {
+    // Create or attach to shared memory segment
+    int shmid = shmget(SHM_KEY, MAX_FILENAME_LENGTH * sizeof(char), 0666 | IPC_CREAT);
+    if (shmid == -1) {
+        perror("shmget failed");
+        exit(EXIT_FAILURE);
+    }
+
+    char *shared_memory = (char *)shmat(shmid, NULL, 0);
+    if (shared_memory == (void *)-1) {
+        perror("shmat failed");
+        exit(EXIT_FAILURE);
+    }
+
+    DIR *dir;
+    struct dirent *entry;
+    dir = opendir("new-data");
+    if (!dir) {
+        perror("Unable to open directory");
+        exit(EXIT_FAILURE);
+    }
+
+
+    char *current_position = shared_memory;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_REG) {
+            char *filename = entry->d_name;
+            if (strstr(filename, ".csv") != NULL) { 
+                char filepath[MAX_FILENAME_LENGTH];
+                snprintf(filepath, MAX_FILENAME_LENGTH, "new-data/%s", filename);
+
+                FILE *file = fopen(filepath, "r");
+                if (file == NULL) {
+                    perror("Failed to open file");
+                    continue; // Skip to the next file
+                }
+
+                strncpy(current_position, filename, MAX_FILENAME_LENGTH - (current_position - shared_memory));
+                current_position += strlen(filename);
+                *current_position++ = '\n'; // Add newline after filename
+
+                char line[MAX_FILENAME_LENGTH];
+                while (fgets(line, MAX_FILENAME_LENGTH, file) != NULL) {
+                    strncpy(current_position, line, MAX_FILENAME_LENGTH - (current_position - shared_memory));
+                    current_position += strlen(line);
+                }
+
+                *current_position++ = '\n';
+
+                fclose(file);
+
+                printf("Moved file content to shared memory: %s\n", filename);
+            }
+        }
+    }
+    closedir(dir);
+```
+
+output:
+
+![image](https://drive.google.com/uc?export=view&id=1q_PDNcTiqW_mhgwWbadcM0slsp6zUa5-)
+
+Kedua kita liat db.c:
+
+Bagian ini untuk mengambil file dari shared memory ke direktori database dan mengambil timestamp untuk file db.log yang akan dibuat juga
+
+```bash
+void move_files_from_shared_memory() {
+    int shmid = shmget(SHM_KEY, MAX_FILENAME_LENGTH * sizeof(char), 0666 | IPC_CREAT);
+    if (shmid == -1) {
+        perror("shmget failed");
+        exit(EXIT_FAILURE);
+    }
+  
+    char *shared_memory = (char *)shmat(shmid, NULL, 0);
+    if (shared_memory == (void *)-1) {
+        perror("shmat failed");
+        exit(EXIT_FAILURE);
+    }
+
+    FILE *log_file = fopen("microservices/database/db.log", "a");
+    if (log_file == NULL) {
+        perror("Failed to open log file");
+        exit(EXIT_FAILURE);
+    }
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    char timestamp[20];
+    struct tm *tm_info;
+    tm_info = localtime(&tv.tv_sec);
+    strftime(timestamp, sizeof(timestamp), "%d/%m/%Y %H:%M:%S", tm_info);
+
+    char *current_position = shared_memory;
+    while (*current_position != '\0') {
+        // Find the end of the filename
+        char *end_of_filename = strchr(current_position, '\n');
+        if (end_of_filename == NULL) {
+            fprintf(stderr, "Invalid format in shared memory: missing newline character\n");
+            break;
+        }
+
+        *end_of_filename = '\0'; // Null-terminate the filename
+        char *filename = current_position;
+
+        // Move to the next filename (if any)
+        current_position = end_of_filename + 1;
+
+        char source_path[MAX_FILENAME_LENGTH];
+        snprintf(source_path, sizeof(source_path), "new-data/%s", filename);
+        char dest_path[MAX_FILENAME_LENGTH];
+        snprintf(dest_path, sizeof(dest_path), "microservices/database/%s", filename);
+      
+        if (access(source_path, F_OK) != 0) {
+            fprintf(stderr, "Source file '%s' does not exist\n", source_path);
+            continue;
+        }
+
+        char* dest_directory = "microservices/database";
+        if (access(dest_directory, F_OK) != 0) {
+            fprintf(stderr, "Destination directory '%s' does not exist\n", dest_directory);
+            continue;
+        }
+
+        if (rename(source_path, dest_path) == -1) {
+            perror("Failed to move file");
+            continue;
+        }
+        printf("Moved file from shared memory: %s\n", filename);
+
+        char file_type[20];
+        if (strstr(filename, "trashcan") != NULL) {
+            strcpy(file_type, "[Trash Can]");
+        } else if (strstr(filename, "parkinglot") != NULL) {
+            strcpy(file_type, "[Parking Lot]");
+        } else {
+            strcpy(file_type, "[Unknown]");
+        }
+
+        char log_entry[MAX_LOG_LENGTH];
+        snprintf(log_entry, sizeof(log_entry), "%s %s %s\n", timestamp, file_type, filename);
+        fprintf(log_file, "%s", log_entry);
+    }
+
+    fclose(log_file);
+
+    if (shmdt(shared_memory) == -1) {
+        perror("shmdt failed");
+        exit(EXIT_FAILURE);
+    }
+}
+```
+
+output di terminal:
+
+![image](https://drive.google.com/uc?export=view&id=19Xo9Fshg3NR1DPjBx2IrmMlqSc8REdSo)
+
+output ls di direktori database:
+
+![image](https://drive.google.com/uc?export=view&id=1tC4mEqpLFAnpMFo84ZVw-s3ig-YPpJj-)
+
+dalam file db.log:
+
+![image](https://drive.google.com/uc?export=view&id=143VTrQnsT_vMClgtRotL-8eysByxj7sO)
+
+Terakhir kita liat rate.c:
+
+Bagian ini untuk mengambil file dari shared memory dan mengoutput rating tertinggi dari kedua file
+
+```bash
+typedef struct {
+    char name[MAX_FILENAME_LENGTH];
+    float rating;
+} Place;
+
+void get_highest_rating(const char *type) {
+    // Variables to store the highest rated place for each type
+    float highest_rating = 0;
+    char highest_name[MAX_FILENAME_LENGTH];
+    char highest_filename[MAX_FILENAME_LENGTH];
+  
+    int shmid = shmget(SHM_KEY, MAX_FILENAME_LENGTH * sizeof(char), 0666);
+    if (shmid == -1) {
+        perror("shmget failed");
+        exit(EXIT_FAILURE);
+    }
+
+    char *shared_memory = (char *)shmat(shmid, NULL, 0);
+    if (shared_memory == (void *)-1) {
+        perror("shmat failed");
+        exit(EXIT_FAILURE);
+    }
+
+    char *current_position = shared_memory;
+    while (*current_position != '\0') {
+        char filename[MAX_FILENAME_LENGTH];
+        strcpy(filename, current_position);
+        current_position += strlen(filename) + 1; // Move to the next filename
+
+        FILE *file = fopen(filename, "r");
+        if (file == NULL) {
+            perror("Failed to open file");
+            continue; // Skip to the next file
+        }
+
+        Place place;
+        while (fscanf(file, "%[^,], %f\n", place.name, &place.rating) != EOF) {
+            if (place.rating > highest_rating) {
+                highest_rating = place.rating;
+                strcpy(highest_name, place.name);
+                strcpy(highest_filename, filename);
+            }
+        }
+        fclose(file);
+    }
+
+    printf("Type: %s\n", type);
+    printf("Filename: %s\n", highest_filename);
+    printf("--------------------\n");
+    printf("Name: %s\n", highest_name);
+    printf("Rating: %.1f\n", highest_rating);
+
+    if (shmdt(shared_memory) == -1) {
+        perror("shmdt failed");
+        exit(EXIT_FAILURE);
+    }
+}
+```
+
+output:
+
+![image](https://drive.google.com/uc?export=view&id=1Mk_jmbe4rxOKdENk-cxy7ou5mHHswKG2)
+
+### Revisi soal no 1
+
+rate.c tidak bsia membuka file csv yang berada di shared memory dan ada kesalahan kecil di file db.lognya
+
 ## Soal no 2
 Dikerjakan oleh **Michael Kenneth Salim (5027231008)**
 
@@ -438,6 +710,8 @@ else
   
 ### Revisi soal no 2
 1. Penambahan pengubah string menjadi integer untuk angka 0
+
+![image](https://drive.google.com/uc?export=view&id=1Wlb4uPGb_KC3LTApTkULMthiYfb8WXHr)
 
 ## Soal no 3
 Dikerjakan oleh **Michael Kenneth Salim (5027231008)**
