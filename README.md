@@ -766,3 +766,222 @@ int main() {
 Dalam program paddock.c ini, program akan menerima permintaan dari klien driver.c melalui soket TCP/IP. Program ini dijalankan sebagai daemon di latar belakang. Pertama, program membuat sebuah soket server dan mengikatnya (bind) dengan alamat IP dan port yang telah ditentukan (dalam kasus ini, PORT 8080). Setelah itu, program mendengarkan (listen) koneksi masuk dari klien. Ketika ada koneksi yang masuk, program menerima (accept) koneksi tersebut dan menerima data yang dikirimkan oleh klien melalui soket. Data yang diterima adalah jenis perintah (seperti "Gap", "Fuel", "Tire", atau "Type") dan nilai terkait (jarak, sisa bahan bakar, sisa ban, atau jenis ban). Program akan memanggil fungsi yang sesuai dari file actions.c berdasarkan jenis perintah dan nilai yang diterima, misalnya fungsi gap untuk perintah "Gap" dengan nilai jarak.
 ## Soal no 4
 Dikerjakan oleh **Veri Rahman (5027231088)**
+
+Pada soal no 4 ini, Kita diminta untuk membuat program yang menampilkan list anime dari file yang disediakan. Program ini menggunakan socket dimana client dan server terhubung, Client berfungsi sebagai pengirim pesan dan dapat menerima pesan dari server. Sedangkan, server berfungsi sebagai penerima pesan dari client dan hanya menampilkan pesan perintah client saja. Server juga digunakan untuk membaca myanimelist.csv dan mencatat perubahan seperti add, edit, dan delete pada sebuah log.
+
+```bash
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+
+int main(int argc, char const *argv[]) {
+    struct sockaddr_in address;
+    int sock = 0;
+    struct sockaddr_in serv_addr;
+    char command[2048] = {0};
+    char response[4096] = {0};
+
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        printf("\n Socket creation error \n");
+        return -1;
+    }
+
+    memset(&serv_addr, '0', sizeof(serv_addr));
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORT);
+
+    if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0) {
+        printf("\nInvalid address/ Address not supported \n");
+        return -1;
+    }
+
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        printf("\nConnection gagal \n");
+        return -1;
+    }
+
+    while (1) {
+        printf("You: ");
+        fgets(command, 2048, stdin);
+        command[strcspn(command, "\n")] = 0;
+
+        send(sock, command, strlen(command), 0);
+
+        read(sock, response, 4096);
+        printf("Server: \n%s\n", response);
+
+        if (strcmp(command, "exit") == 0) {
+            break;
+        }
+    }
+
+    return 0;
+}
+```
+Kode diatas merupakan Client yang berfungsi sebagai pengirim pesan dan dapat menerima pesan dari server. **stdio.h, stdlib.h, string.h, sys/socket.h, netinet/in.h, unistd.h, dan arpa/inet.h** pustaka-pustaka ini memberikan fungsi-fungsi yang digunakan dalam program untuk melakukan operasi input-output, alokasi memori, manipulasi string, dan interaksi dengan jaringan. Konstanta **'PORT'** didefinisikan sebagai nomor port yang akan digunakan untuk koneksi ke server. Program membuat socket dengan memanggil fungsi **'socket()'** dengan parameter AF_INET yang menandakan penggunaan protokol IPv4, SOCK_STREAM yang menandakan jenis socket TCP, dan 0 yang menandakan bahwa protokol yang digunakan akan dipilih secara otomatis oleh sistem. Program mengatur struktur **'serv_addr'** yang berisi informasi tentang alamat server, yaitu alamat IP dan nomor port. Program mencoba membuat koneksi ke server dengan memanggil fungsi **'connect()'** yang mengambil socket, alamat server, dan ukuran alamat sebagai argumen. Jika koneksi berhasil, program akan lanjut ke langkah selanjutnya. Kemudian program memasuki loop tak terbatas di mana client dapat mengirimkan perintah ke server dan menerima respons dari server. Di dalam loop, client menampilkan prompt "You: ", kemudian membaca input dari pengguna menggunakan **fgets()** dan mengirimkan perintah tersebut ke server menggunakan fungsi **send()**. Setelah itu, client membaca respons dari server menggunakan **read()** dan menampilkannya kepada pengguna dengan prompt "Server: ". Jika pengguna memasukkan perintah **"exit"**, program keluar dari loop dan menutup koneksi dengan server sebelum mengakhiri eksekusi.
+
+```bash
+#include <stdio.h>
+#include <sys/socket.h>
+#include <stdlib.h>
+#include <netinet/in.h>
+#include <string.h>
+#include <unistd.h>
+#include <time.h>
+
+#define PORT 8080
+
+void log_change(const char *type, const char *message) {
+    FILE *fp = fopen("/home/rhmnn/sisop/prak3/soal_4/change.log", "a");
+    if (fp != NULL) {
+        time_t now;
+        time(&now);
+        struct tm *timeinfo = localtime(&now);
+        char timestamp[20];
+        strftime(timestamp, sizeof(timestamp), "%d/%m/%y %T", timeinfo);
+        fprintf(fp, "[%s] [%s] %s\n", timestamp, type, message);
+        fclose(fp);
+    }
+}
+
+void process_command(int client_socket, const char *command) {
+    FILE *anime_file = fopen("/home/rhmnn/sisop/prak3/soal_4/myanimelist.csv", "r+");
+    if (anime_file == NULL) {
+        perror("Gagal membuka file myanimelist.csv");
+        return;
+    }
+
+    char response[4096] = {0};
+    char line[1024];
+    char *token;
+
+    if (strncmp(command, "tampilkan", 9) == 0) {
+        while (fgets(line, 1024, anime_file) != NULL) {
+            strcat(response, line);
+            continue;
+        }
+    } else if (strncmp(command, "genre", 5) == 0 || strncmp(command, "hari", 4) == 0 || strncmp(command, "status", 6) == 0) {
+        char keyword[512];
+        sscanf(command, "%*s %[^\n]", keyword);
+        while (fgets(line, 1024, anime_file) != NULL) {
+            if (strstr(line, keyword) != NULL) {
+                strcat(response, line);
+                continue;
+            }
+        }
+    } else if (strncmp(command, "add", 3) == 0) {
+        char new_anime[1024];
+        sscanf(command, "%*s %[^\n]", new_anime);
+        fprintf(anime_file, "%s\n", new_anime);
+        strcpy(response, "Anime berhasil ditambahkan.");
+        log_change("ADD", new_anime);
+    } else if (strncmp(command, "edit", 4) == 0) {
+        char old_title[100];
+        sscanf(command, "%*s %[^\n]", old_title);
+        long int pos = ftell(anime_file);
+        int found = 0;
+        while (fgets(line, 1024, anime_file) != NULL) {
+            if (strstr(line, old_title) != NULL) {
+                found = 1;
+                fseek(anime_file, pos, SEEK_SET);
+                fprintf(anime_file, "%s\n", command + 5); // Skip "edit " part
+                strcpy(response, "Anime berhasil diedit.");
+                log_change("EDIT", command + 5); // Skip "edit " part
+                break;
+            }
+            pos = ftell(anime_file);
+        }
+        if (!found) {
+            strcpy(response, "Anime tidak ditemukan.");
+        }
+    } else if (strncmp(command, "delete", 6) == 0) {
+        char delete_title[100];
+        sscanf(command, "%*s %[^\n]", delete_title);
+        long int pos = ftell(anime_file);
+        int found = 0;
+        while (fgets(line, 1024, anime_file) != NULL) {
+            if (strstr(line, delete_title) != NULL) {
+                found = 1;
+                fseek(anime_file, pos, SEEK_SET);
+                fprintf(anime_file, " ");
+                strcpy(response, "Anime berhasil dihapus.");
+                log_change("DEL", delete_title);
+                break;
+            }
+            pos = ftell(anime_file);
+        }
+        if (!found) {
+            strcpy(response, "Anime tidak ditemukan.");
+        }
+    } else if (strncmp(command, "exit", 4) == 0) {
+        strcpy(response, "Exiting the client");
+    } else {
+        strcpy(response, "Invalid Command");
+    }
+
+    send(client_socket, response, strlen(response), 0);
+    fclose(anime_file);
+}
+
+int main(int argc, char const *argv[]) {
+    int server_socket, client_socket;
+    struct sockaddr_in address;
+    int opt = 1;
+    int addrlen = sizeof(address);
+    char command[2048] = {0};
+
+    if ((server_socket = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+        perror("setsockopt");
+        exit(EXIT_FAILURE);
+    }
+
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons( PORT );
+
+    if (bind(server_socket, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    if (listen(server_socket, 3) < 0) {
+        perror("listen");
+        exit(EXIT_FAILURE);
+    }
+
+    if ((client_socket = accept(server_socket, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+         perror("accept");
+         exit(EXIT_FAILURE);
+    }
+    while(1) {
+        recv(client_socket, command, 2048, 0);
+
+        printf("Received: %s\n", command);
+
+        process_command(client_socket, command);
+
+    }
+
+    close(server_socket);
+    close(client_socket);
+    return 0;
+}
+```
+Kode diatas merupakan Server berfungsi sebagai penerima pesan dari client dan hanya menampilkan pesan perintah client saja. Pustaka **stdio.h, stdlib.h, string.h, sys/socket.h, netinet/in.h, unistd.h, dan time.h** ini menyediakan fungsi-fungsi yang digunakan dalam program untuk melakukan operasi input-output, alokasi memori, manipulasi string, operasi socket, dan manipulasi waktu. Lalu konstanta **PORT** didefinisikan sebagai nomor port yang akan digunakan untuk koneksi ke server. Fungsi **log_change** digunakan untuk mencatat perubahan pada file myanimelist.csv ke dalam file change.log. Fungsi ini menerima dua parameter, yaitu tipe perubahan (type) dan pesan perubahan (message). Fungsi ini membuka file change.log, menuliskan timestamp, tipe perubahan, dan pesan perubahan, kemudian menutup file. Fungsi **process_command** digunakan untuk memproses perintah yang diterima dari client. Fungsi ini menerima dua parameter, yaitu socket client dan perintah yang diterima (command). Fungsi ini membuka file myanimelist.csv untuk menampilkan seluruh judul, menampilkan judul berdasarkan genre, menampilkan judul berdasarkan hari, menampilkan status berdasarkan berdasarkan judul, menambahkan anime ke dalam file myanimelist.csv, melakukan edit anime berdasarkan judul, melakukan delete berdasarkan judul, selain command yang diberikan akan menampilkan tulisan “Invalid Command”, lalu memproses perintah yang diterima, menulis respons, dan mengirimkan respons tersebut kembali ke client. Respons yang dikirimkan berisi hasil dari pemrosesan perintah. Fungsi **main** melakukan inisialisasi socket, membuat koneksi, menerima perintah dari client, dan memanggil fungsi process_command untuk memproses perintah tersebut. Program akan terus berjalan dalam loop yang tak terbatas hingga menerima perintah "exit" dari client. Program membuat socket dengan memanggil fungsi **socket()** dan mengatur opsi socket dengan **setsockopt()**. Kemudian, program mengatur alamat server menggunakan **bind()**. Program ini juga menggunakan **listen()** untuk mendengarkan koneksi dari client, dan **accept()** untuk menerima koneksi. Setelah koneksi diterima, program akan masuk ke dalam loop dengan menggunakan **recv()** untuk menerima perintah dari client, kemudian memanggil fungsi **process_command** untuk memproses perintah tersebut. Setelah loop selesai, program akan menutup socket dan koneksi dengan client.
+
+## REVISI SOAL 4
+1. Fungsi edit yang tidak dapat menemukan anime pada file myanimelist.csv sehingga tidak bisa menampilkan outputnya.
+2. Fungsi delete yang tidak dapat menghapus anime yang baru ditambahkan.
+3. Anime yang baru ditambahkan ada di file myanimelist.csv, tetapi tidak membuat line sendiri melainkan mengambil line anime yang sudah ada.
